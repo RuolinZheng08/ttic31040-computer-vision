@@ -1,0 +1,1 @@
+{'reference_point':(761, 527),'top_interstage':(760, 442),'top_nosecone':(830, 500),'bottom_nosecone':(834, 676),'bottom_interstage':(700, 750)}
