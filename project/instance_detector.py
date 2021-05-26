@@ -1,3 +1,4 @@
+# %load instance_detector.py
 from collections import Counter
 
 import numpy as np
@@ -17,21 +18,20 @@ class InstanceDetector():
             (width, 0),
             (width, height),
             (0, height)
-        ])
+        ]).astype(np.float32).reshape(-1,1,2)
 
         # upper left and lower right corners
         self.corners_ul_lr = np.vstack([
             (width, 0),
             (0, height)
-        ])
+        ]).astype(np.float32)
 
         self.sift = cv2.xfeatures2d.SIFT_create()
         keypoints, descriptors = self.sift.detectAndCompute(self.reference_image, None)
         self.reference_keypoints = keypoints
         self.reference_descriptors = descriptors
 
-    def detect_object(self, input_image, match_threshold=0.5,
-    hough_num_bins=[4, 4, 4, 4], ransac_threshold=5.0):
+    def detect_object(self, input_image, match_threshold=0.8, hough_num_bins=[2, 2, 2, 2], ransac_threshold=5.0):
         keypoints_input, keypoints_reference = self.extract_matching_keypoints(
             input_image, distance_threshold=match_threshold
         )
@@ -44,10 +44,19 @@ class InstanceDetector():
             src=points_reference, dst=points_input, ransac_threshold=ransac_threshold
         )
 
-        bounding_box_corners = transform_matrix @ self.reference_vertices
+        bounding_box_corners = cv2.perspectiveTransform(self.reference_vertices, transform_matrix)
+        bounding_box_corners = bounding_box_corners.squeeze()
+
+        # plot the bounding box on the image
+        xs = list(bounding_box_corners[:, 0].flatten()) + [bounding_box_corners[0, 0]]
+        ys = list(bounding_box_corners[:, 1].flatten()) + [bounding_box_corners[0, 1]]
+        plt.imshow(input_image)
+        plt.axis('off')
+        plt.plot(xs, ys, 'r', linewidth=5)
+
         return bounding_box_corners
 
-    def extract_matching_keypoints(self, input_image, distance_threshold=0.5):
+    def extract_matching_keypoints(self, input_image, distance_threshold):
         keypoints, descriptors = self.sift.detectAndCompute(input_image, None)
         # len(matches) == len(descriptors1)
         matches = cv2.BFMatcher().knnMatch(descriptors, self.reference_descriptors, k=2)
@@ -75,7 +84,7 @@ class InstanceDetector():
         transformed = keypoint_input.pt + scale * rotated
         return transformed
 
-    def filter_keypoints_with_hough(self, keypoints_input, keypoints_reference, num_bins=[4, 4, 4, 4]):
+    def filter_keypoints_with_hough(self, keypoints_input, keypoints_reference, num_bins):
         # vote on four parameters, i.e., four points from two corner coordinates
         assert len(num_bins) == 4
         # construct raw votes, before quantization, num_keypoints x 4
@@ -89,10 +98,12 @@ class InstanceDetector():
         # quantize votes into bins
         votes = []
         for i in range(votes_raw.shape[1]):
-            # no need to save the bins
-            param_votes, _ = np.histogram(votes_raw[:, i], bins=num_bins[i])
+            param_votes_raw = votes_raw[:, i]
+            # no need to save the histogram, only need the bins
+            _, bins = np.histogram(param_votes_raw, bins=num_bins[i])
+            param_votes = np.digitize(param_votes_raw, bins, right=False)
             votes.append(param_votes)
-        votes = np.vstack(votes)
+        votes = np.vstack(votes).T
 
         # count popular vote
         vote_tuples = tuple([tuple(row) for row in votes])
@@ -116,7 +127,7 @@ class InstanceDetector():
 
         return points_input, points_reference
 
-    def fit_homography(src, dst, ransac_threshold=5.0):
+    def fit_homography(self, src, dst, ransac_threshold):
         _, mask = cv2.findHomography(src, dst, cv2.RANSAC, ransac_threshold)
         matches_mask = mask.ravel().tolist()
         inlier_indices = []
